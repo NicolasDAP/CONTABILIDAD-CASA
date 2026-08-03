@@ -2281,7 +2281,7 @@ function renderAnalisisPersonal(){
 
 /* ============ SYNC ============ */
 function sync(accion, data){
-  if(!SHEETS_URL || SHEETS_URL.indexOf('PEGAR_AQUI')===0){ PENDIENTES.push({accion,data}); persist(); renderSyncEstado(); return; }
+  if(!SHEETS_URL || SHEETS_URL.indexOf('https://script.google.com/macros/s/AKfycbz9Itamhb7J3m6hjkjXwAYEm6s_mOCrmQf0M_l-lumAhyJW2RgWP8Cy-HGj-SsJt-OI/exec')===0){ PENDIENTES.push({accion,data}); persist(); renderSyncEstado(); return; }
   fetch(SHEETS_URL, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body:JSON.stringify({accion,data})})
     .catch(()=>{ PENDIENTES.push({accion,data}); persist(); });
   renderSyncEstado();
