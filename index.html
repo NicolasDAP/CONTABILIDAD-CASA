@@ -370,10 +370,11 @@ small.hint{color:var(--muted); display:block; margin-top:6px; font-size:.75rem;}
       <div id="importResumen" class="hint" style="margin-top:6px"></div>
     </div>
     <div class="card">
-      <h3>Código Apps Script (backend)</h3>
-      <small class="hint">El código exacto que debe estar pegado en Extensiones &gt; Apps Script de tu Google Sheet. Si algo no sincroniza, compara este texto con lo que tienes pegado allá — puede que estés en una versión distinta.</small>
-      <textarea id="appsScriptCodigo" readonly style="min-height:160px; font-family:monospace; font-size:.75rem; margin-top:8px" onclick="this.select()"></textarea>
-      <button class="btn-ghost btn-sm" style="margin-top:8px; width:100%" onclick="copiarCodigoAppsScript()">Copiar código completo</button>
+      <h3>Conexión con Google Sheets</h3>
+      <label>URL del Google Sheet (Apps Script)</label>
+      <input id="sheetsUrlInput" placeholder="https://script.google.com/macros/s/AKfycb.../exec">
+      <small class="hint">Pega aquí la URL de implementación de tu Apps Script (termina en /exec). Es una sola URL compartida por todos los perfiles — la guarda este celular.</small>
+      <button class="btn-primary" style="margin-top:10px" onclick="guardarSheetsUrl()">Guardar URL</button>
     </div>
     <div class="card">
       <h3>Sincronización</h3>
@@ -601,188 +602,7 @@ small.hint{color:var(--muted); display:block; margin-top:6px; font-size:.75rem;}
 
 <script>
 /* ============ CONFIG ============ */
-const APPS_SCRIPT_CODIGO = `/**
- * GASTOS CASA - Backend Apps Script v7
- * Agrega: "CuentaDestino" en el catálogo (Categorias y Cuotas) — la cuenta
- * hacia donde se destina cada gasto fijo/cuota se configura una sola vez en
- * el catálogo, no cada vez que se paga.
- *
- * IMPORTANTE: si ya tenías las hojas "Categorias" o "Cuotas" creadas con una
- * versión anterior (sin columna CuentaDestino), bórralas — se recrean solas
- * con el orden correcto en el próximo guardado desde la app.
- *
- * Hojas Casa: Movimientos | Categorias | Presupuestos | Cierres | Cuotas | Perfiles | Cuentas
- * Hojas Personal: Personal_Movimientos | Personal_Categorias
- *
- * DEPLOY: igual que versiones anteriores — Extensiones > Apps Script,
- * pegar completo, Implementar > Nueva implementación > Aplicación web,
- * Ejecutar como "Yo", acceso "Cualquier usuario". Pegar la URL resultante
- * en SHEETS_URL dentro del index.html.
- */
-
-function doPost(e) {
-  try {
-    var body = JSON.parse(e.postData.contents);
-    var accion = body.accion;
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-
-    if (accion === 'movimiento') {
-      var sh = getOrCreateSheet(ss, 'Movimientos',
-        ['ID','TipoMovimiento','Fecha','Mes','Año','Categoria','Item','Monto','Persona','Notas','TieneFotos','Pagado','FechaPago','CuentaOrigen','FechaRegistro']);
-      var d = body.data;
-      upsertRow(sh, ['ID'], [d.id],
-        [d.id, d.tipoMovimiento, d.fecha, d.mes, d.anio, d.categoria, d.item, d.monto, d.persona || '', d.notas || '', d.tieneFotos ? 'SI':'NO', d.pagado ? 'SI':'NO', d.fechaPago || '', d.cuentaOrigen || '', new Date()]);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'perfiles') {
-      var shpf = getOrCreateSheet(ss, 'Perfiles', ['Nombre','PIN','Rol']);
-      shpf.getRange(2,1,Math.max(shpf.getLastRow()-1,0),3).clearContent();
-      var rowsPf = body.data.map(function(p){ return [p.nombre, p.pin, p.rol]; });
-      if (rowsPf.length) shpf.getRange(2,1,rowsPf.length,3).setValues(rowsPf);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'cuentas') {
-      var shct = getOrCreateSheet(ss, 'Cuentas', ['Nombre']);
-      shct.getRange(2,1,Math.max(shct.getLastRow()-1,0),1).clearContent();
-      var rowsCt = body.data.map(function(c){ return [c]; });
-      if (rowsCt.length) shct.getRange(2,1,rowsCt.length,1).setValues(rowsCt);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'categorias') {
-      var shc = getOrCreateSheet(ss, 'Categorias',
-        ['TipoCategoria','Categoria','Item','MontoHabitual','MedioPago','NCuotas','CuotaActual','CuentaDestino']);
-      shc.getRange(2,1,Math.max(shc.getLastRow()-1,0),8).clearContent();
-      var rows = [];
-      body.data.forEach(function(cat){
-        var items = (cat.items && cat.items.length) ? cat.items : [{}];
-        items.forEach(function(it){
-          rows.push([cat.tipo, cat.nombre, it.nombre||'', it.montoHabitual||'', it.medioPago||'', it.nCuotas||'', it.cuotaActual||'', it.cuentaDestino||'']);
-        });
-      });
-      if (rows.length) shc.getRange(2,1,rows.length,8).setValues(rows);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'presupuestos') {
-      var shp = getOrCreateSheet(ss, 'Presupuestos', ['Categoria','MontoPresupuestado']);
-      shp.getRange(2,1,Math.max(shp.getLastRow()-1,0),2).clearContent();
-      var rowsP = body.data.map(function(p){ return [p.categoria, p.monto]; });
-      if (rowsP.length) shp.getRange(2,1,rowsP.length,2).setValues(rowsP);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'cierre') {
-      var shz = getOrCreateSheet(ss, 'Cierres',
-        ['Mes','Año','SaldoCalculado','MontoLiquidado','Arrastre','FechaCierre']);
-      var c = body.data;
-      upsertRow(shz, ['Mes','Año'], [c.mes, c.anio],
-        [c.mes, c.anio, c.saldoCalculado, c.montoLiquidado, c.arrastre, new Date()]);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'personal_movimiento') {
-      var shpm = getOrCreateSheet(ss, 'Personal_Movimientos',
-        ['ID','TipoMovimiento','Fecha','Mes','Año','Categoria','Item','Monto','Persona','Notas','FechaRegistro']);
-      var dp = body.data;
-      upsertRow(shpm, ['ID'], [dp.id],
-        [dp.id, dp.tipoMovimiento, dp.fecha, dp.mes, dp.anio, dp.categoria, dp.item, dp.monto, dp.persona || '', dp.notas || '', new Date()]);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'cuotas') {
-      var shq = getOrCreateSheet(ss, 'Cuotas', ['ID','Nombre','Categoria','MontoCuota','NCuotas','CuotaActual','Activo','CuentaDestino']);
-      shq.getRange(2,1,Math.max(shq.getLastRow()-1,0),8).clearContent();
-      var rowsQ = body.data.map(function(c){ return [c.id, c.nombre, c.categoria, c.montoCuota, c.nCuotas, c.cuotaActual, c.activo?'SI':'NO', c.cuentaDestino||'']; });
-      if (rowsQ.length) shq.getRange(2,1,rowsQ.length,8).setValues(rowsQ);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'eliminar_movimiento') {
-      var shDel = ss.getSheetByName('Movimientos');
-      if (shDel) deleteRowByKey(shDel, ['ID'], [body.data.id]);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'eliminar_personal_movimiento') {
-      var shDelP = ss.getSheetByName('Personal_Movimientos');
-      if (shDelP) deleteRowByKey(shDelP, ['ID'], [body.data.id]);
-      return jsonOut({ok:true});
-    }
-
-    if (accion === 'personal_categorias') {
-      var shpc = getOrCreateSheet(ss, 'Personal_Categorias', ['TipoCategoria','Categoria','Item']);
-      shpc.getRange(2,1,Math.max(shpc.getLastRow()-1,0),3).clearContent();
-      var rowsPc = [];
-      body.data.forEach(function(cat){
-        (cat.items && cat.items.length ? cat.items : ['']).forEach(function(it){
-          rowsPc.push([cat.tipo, cat.nombre, it]);
-        });
-      });
-      if (rowsPc.length) shpc.getRange(2,1,rowsPc.length,3).setValues(rowsPc);
-      return jsonOut({ok:true});
-    }
-
-    return jsonOut({ok:false, error:'accion desconocida'});
-  } catch (err) {
-    return jsonOut({ok:false, error:String(err)});
-  }
-}
-
-function doGet(e) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var out = {};
-  ['Movimientos','Categorias','Presupuestos','Cierres','Cuotas','Perfiles','Cuentas','Personal_Movimientos','Personal_Categorias'].forEach(function(name){
-    var sh = ss.getSheetByName(name);
-    out[name] = sh ? sh.getDataRange().getValues() : [];
-  });
-  return jsonOut(out);
-}
-
-function getOrCreateSheet(ss, name, headers) {
-  var sh = ss.getSheetByName(name);
-  if (!sh) {
-    sh = ss.insertSheet(name);
-    sh.getRange(1,1,1,headers.length).setValues([headers]);
-    sh.setFrozenRows(1);
-  }
-  return sh;
-}
-
-function upsertRow(sheet, keyCols, keyVals, rowValues) {
-  var data = sheet.getDataRange().getValues();
-  var headers = data[0];
-  var keyIdx = keyCols.map(function(k){ return headers.indexOf(k); });
-
-  for (var r = 1; r < data.length; r++) {
-    var match = keyIdx.every(function(ci, i){ return String(data[r][ci]) === String(keyVals[i]); });
-    if (match) {
-      sheet.getRange(r+1, 1, 1, rowValues.length).setValues([rowValues]);
-      return;
-    }
-  }
-  sheet.appendRow(rowValues);
-}
-
-function deleteRowByKey(sheet, keyCols, keyVals) {
-  var data = sheet.getDataRange().getValues();
-  var headers = data[0];
-  var keyIdx = keyCols.map(function(k){ return headers.indexOf(k); });
-  for (var r = 1; r < data.length; r++) {
-    var match = keyIdx.every(function(ci, i){ return String(data[r][ci]) === String(keyVals[i]); });
-    if (match) { sheet.deleteRow(r+1); return; }
-  }
-}
-
-function jsonOut(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-`;
-
-const SHEETS_URL = 'PEGAR_AQUI_LA_URL_DEL_APPS_SCRIPT_DESPLEGADO';
+let SHEETS_URL = localStorage.getItem('gc-sheets-url') || '';
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
 const CATS_FIJAS_DEFAULT = [
@@ -902,7 +722,7 @@ function mostrarVista(id){
 
   if(id==='v-balance') renderBalance();
   if(id==='v-analisis') renderAnalisisCasa();
-  if(id==='v-categorias'){ renderCategorias(); renderCuotasList(); renderPerfilesList(); renderCuentasBanco(); renderSyncEstado(); document.getElementById('cfgP1').value=CONFIG.p1; document.getElementById('cfgP2').value=CONFIG.p2; document.getElementById('appsScriptCodigo').value = APPS_SCRIPT_CODIGO; }
+  if(id==='v-categorias'){ renderCategorias(); renderCuotasList(); renderPerfilesList(); renderCuentasBanco(); renderSyncEstado(); document.getElementById('cfgP1').value=CONFIG.p1; document.getElementById('cfgP2').value=CONFIG.p2; document.getElementById('sheetsUrlInput').value = SHEETS_URL; }
   if(id==='v-registrar') renderRecientes();
   if(id==='v-registrar-personal') renderRecientesP();
   if(id==='v-resultados') renderResultados();
@@ -1318,14 +1138,16 @@ function eliminarMovimientoActual(){
   if(document.getElementById('v-balance').classList.contains('active')) renderBalance();
 }
 
-function copiarCodigoAppsScript(){
-  const ta = document.getElementById('appsScriptCodigo');
-  ta.select();
-  navigator.clipboard.writeText(APPS_SCRIPT_CODIGO).then(()=>{
-    toast('Código copiado — pégalo completo en Apps Script');
-  }).catch(()=>{
-    toast('No se pudo copiar automático — selecciona el texto y copia manual (Ctrl/Cmd+C)');
-  });
+function guardarSheetsUrl(){
+  const val = document.getElementById('sheetsUrlInput').value.trim();
+  if(val && !val.includes('script.google.com')){
+    if(!confirm('Esa URL no parece de Apps Script (no contiene script.google.com) — ¿guardarla igual?')) return;
+  }
+  SHEETS_URL = val;
+  localStorage.setItem('gc-sheets-url', SHEETS_URL);
+  renderSyncEstado();
+  if(SHEETS_URL){ toast('URL guardada — probando conexión...'); sincronizarDesdeSheets(false); }
+  else toast('URL borrada — la app queda solo local hasta que pegues una');
 }
 
 /* ============ SESIÓN / PERFILES / PERMISOS ============ */
@@ -1672,7 +1494,6 @@ function borrarCategoria(idx){
   CATEGORIAS.splice(idx,1); persist(); renderCategorias();
 }
 function guardarConfigNombres(){
-  if(!requiereAdmin()) return;
   CONFIG.p1 = document.getElementById('cfgP1').value.trim()||'Persona 1';
   CONFIG.p2 = document.getElementById('cfgP2').value.trim()||'Persona 2';
   persist();
@@ -2281,15 +2102,19 @@ function renderAnalisisPersonal(){
 
 /* ============ SYNC ============ */
 function sync(accion, data){
-  if(!SHEETS_URL || SHEETS_URL.indexOf('https://script.google.com/macros/s/AKfycbz9Itamhb7J3m6hjkjXwAYEm6s_mOCrmQf0M_l-lumAhyJW2RgWP8Cy-HGj-SsJt-OI/exec')===0){ PENDIENTES.push({accion,data}); persist(); renderSyncEstado(); return; }
+  if(!SHEETS_URL){ PENDIENTES.push({accion,data}); persist(); renderSyncEstado(); return; }
   fetch(SHEETS_URL, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body:JSON.stringify({accion,data})})
     .catch(()=>{ PENDIENTES.push({accion,data}); persist(); });
   renderSyncEstado();
 }
-function reintentarSync(){ const pend=PENDIENTES.slice(); PENDIENTES=[]; persist(); pend.forEach(p=>sync(p.accion,p.data)); toast('Reintentando '+pend.length+' pendientes'); }
+function reintentarSync(){
+  if(!SHEETS_URL){ toast('Falta configurar la URL de Google Sheets arriba'); return; }
+  if(!PENDIENTES.length){ toast('No hay nada pendiente por sincronizar'); return; }
+  const pend=PENDIENTES.slice(); PENDIENTES=[]; persist(); pend.forEach(p=>sync(p.accion,p.data)); toast('Reintentando '+pend.length+' pendientes');
+}
 function renderSyncEstado(){
   const dot=document.getElementById('syncDot'), txt=document.getElementById('syncTexto');
-  if(!SHEETS_URL || SHEETS_URL.indexOf('PEGAR_AQUI')===0){ dot.className='sync-dot pend'; txt.textContent='Sin configurar (falta SHEETS_URL en el código)'; }
+  if(!SHEETS_URL){ dot.className='sync-dot pend'; txt.textContent='Sin configurar — pega la URL de tu Apps Script arriba'; }
   else if(PENDIENTES.length){ dot.className='sync-dot pend'; txt.textContent=PENDIENTES.length+' registro(s) pendiente(s)'; }
   else { dot.className='sync-dot ok'; txt.textContent='Sincronizado con Google Sheets'; }
 }
@@ -2302,8 +2127,8 @@ function renderSyncEstado(){
  */
 let sincronizando = false;
 async function sincronizarDesdeSheets(silencioso){
-  if(!SHEETS_URL || SHEETS_URL.indexOf('PEGAR_AQUI')===0) return;
-  if(sincronizando) return;
+  if(!SHEETS_URL){ if(!silencioso) toast('Falta configurar la URL de Google Sheets (arriba en esta pantalla)'); return; }
+  if(sincronizando){ if(!silencioso) toast('Ya hay una sincronización en curso, espera un momento'); return; }
   sincronizando = true;
   try{
     const res = await fetch(SHEETS_URL, {method:'GET'});
@@ -2452,7 +2277,7 @@ async function sincronizarDesdeSheets(silencioso){
 // Sincroniza al abrir la app y cada 3 minutos mientras esté abierta y visible
 // (no mientras está en segundo plano, para no gastar cuota de Apps Script al dividido).
 window.addEventListener('load', ()=> setTimeout(async ()=>{
-  if(SHEETS_URL && SHEETS_URL.indexOf('PEGAR_AQUI')!==0) await sincronizarDesdeSheets(true);
+  if(SHEETS_URL) await sincronizarDesdeSheets(true);
   procesarCuotasAutomaticas();
 }, 800));
 setInterval(()=>{ if(document.visibilityState==='visible') sincronizarDesdeSheets(true).then(procesarCuotasAutomaticas); }, 3*60*1000);
