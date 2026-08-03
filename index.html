@@ -368,6 +368,8 @@ small.hint{color:var(--muted); display:block; margin-top:6px; font-size:.75rem;}
       <label style="margin-top:14px">Importar movimientos (JSON)</label>
       <input id="importFile" type="file" accept="application/json">
       <div id="importResumen" class="hint" style="margin-top:6px"></div>
+      <button class="btn-danger btn-sm" style="margin-top:14px; width:100%" onclick="resincronizarTodoCasa()">⚠ Reenviar TODOS los movimientos al Sheet (recuperar sincronización)</button>
+      <small class="hint">Úsalo si el Sheet quedó con datos incompletos o desordenados. Antes, borra el contenido de la hoja "Movimientos" en Google Sheets para partir limpio — esto no duplica si algunos IDs ya existen.</small>
     </div>
     <div class="card">
       <h3>Conexión con Google Sheets</h3>
@@ -1802,6 +1804,28 @@ function exportarMovimientosCSV(){
   a.click();
 }
 
+async function resincronizarTodoCasa(){
+  if(!requiereAdmin()) return;
+  if(!SHEETS_URL){ toast('Falta configurar la URL de Google Sheets arriba'); return; }
+  if(!confirm('Esto reenvía TODOS los movimientos guardados en este celular (' + MOVS.length + ' en total) al Sheet, en lotes ordenados. Si ya borraste la hoja "Movimientos" en Google Sheets, dale que sí. ¿Continuar?')) return;
+
+  toast('Reenviando '+MOVS.length+' movimientos — no cierres la app, puede tardar');
+  const TAMAÑO_LOTE = 150;
+  for(let i=0; i<MOVS.length; i+=TAMAÑO_LOTE){
+    const lote = MOVS.slice(i, i+TAMAÑO_LOTE).map(m=>({id:m.id, tipoMovimiento:m.tipoMovimiento, fecha:m.fecha, mes:MESES[m.mes], anio:m.anio, categoria:m.categoria, item:m.item, monto:m.monto, persona:m.persona||'', notas:m.notas||'', tieneFotos:!!m.tieneFotos, pagado:!!m.pagado, fechaPago:m.fechaPago||'', cuentaOrigen:m.cuentaOrigen||''}));
+    try{
+      await fetch(SHEETS_URL, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body:JSON.stringify({accion:'movimientos_batch', data:lote})});
+    } catch(err){ /* si un lote falla por red, no hay retry automático aquí — vuelve a tocar el botón */ }
+  }
+  // Re-envía también el resto del estado (catálogo, cuentas, perfiles, cuotas, presupuestos)
+  sync('categorias', CATEGORIAS.filter(c=>c.tipo!=='variable'));
+  sync('presupuestos', CATEGORIAS.filter(c=>c.tipo==='variable').map(c=>({categoria:c.nombre, monto:c.presupuesto||0})));
+  sync('cuotas', CUOTAS);
+  sync('perfiles', PERFILES);
+  sync('cuentas', CUENTAS);
+  toast('Reenvío completo — revisa el Sheet en unos segundos');
+}
+
 /* ============ RESPALDO / IMPORTACIÓN HISTÓRICA ============ */
 function exportarRespaldo(){
   const respaldo = {version:'v4', exportadoEl:new Date().toISOString(), MOVS, CATEGORIAS, CIERRES, CONFIG, PMOVS, CATEGORIAS_P};
@@ -2107,10 +2131,42 @@ function sync(accion, data){
     .catch(()=>{ PENDIENTES.push({accion,data}); persist(); });
   renderSyncEstado();
 }
-function reintentarSync(){
+async function reintentarSync(){
   if(!SHEETS_URL){ toast('Falta configurar la URL de Google Sheets arriba'); return; }
   if(!PENDIENTES.length){ toast('No hay nada pendiente por sincronizar'); return; }
-  const pend=PENDIENTES.slice(); PENDIENTES=[]; persist(); pend.forEach(p=>sync(p.accion,p.data)); toast('Reintentando '+pend.length+' pendientes');
+
+  const pend = PENDIENTES.slice();
+  PENDIENTES = [];
+  persist();
+  renderSyncEstado();
+
+  const movimientos = pend.filter(p=>p.accion==='movimiento').map(p=>p.data);
+  const otros = pend.filter(p=>p.accion!=='movimiento');
+
+  toast('Sincronizando '+pend.length+' pendiente(s)... no cierres la app');
+
+  // Los movimientos se agrupan en lotes y se envían UNO A LA VEZ (esperando que
+  // cada lote termine antes de mandar el siguiente). Mandarlos todos de golpe
+  // (como antes) hacía que Google rechazara la mayoría por exceso de llamadas
+  // simultáneas, y los que sí llegaban quedaban desordenados.
+  const TAMAÑO_LOTE = 150;
+  for(let i=0; i<movimientos.length; i+=TAMAÑO_LOTE){
+    const lote = movimientos.slice(i, i+TAMAÑO_LOTE);
+    try{
+      await fetch(SHEETS_URL, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body:JSON.stringify({accion:'movimientos_batch', data:lote})});
+    } catch(err){
+      lote.forEach(d=>PENDIENTES.push({accion:'movimiento', data:d}));
+    }
+  }
+
+  // El resto (categorías, cuentas, perfiles, cuotas, cierres, eliminar, personal) va uno por uno, como antes — son pocos.
+  for(const p of otros){
+    sync(p.accion, p.data);
+  }
+
+  persist();
+  renderSyncEstado();
+  toast('Listo — revisa el Sheet en un momento (puede tardar unos segundos en reflejarse)');
 }
 function renderSyncEstado(){
   const dot=document.getElementById('syncDot'), txt=document.getElementById('syncTexto');
