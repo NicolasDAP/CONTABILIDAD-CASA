@@ -64,6 +64,8 @@ button{font-family:inherit; font-size:.95rem; font-weight:600; cursor:pointer; b
 .gasto-item .monto{font-weight:600; white-space:nowrap; margin-left:10px;}
 .tag{display:inline-block; font-size:.68rem; padding:2px 7px; border-radius:20px; background:var(--panel2); color:var(--muted); margin-right:6px;}
 .tag.extra{background:rgba(224,168,78,.18); color:var(--warn);}
+.tag.cuenta-p1{background:rgba(139,94,60,.35); color:#d9a876;}
+.tag.cuenta-p2{background:rgba(232,180,200,.25); color:#f0b8d0;}
 .tag.fondo{background:rgba(107,159,201,.18); color:var(--fondo);}
 .tag.ingreso{background:rgba(95,185,140,.18); color:var(--favor);}
 .tabbar{position:fixed; bottom:0; left:0; right:0; z-index:20; display:flex; background:var(--panel); border-top:1px solid var(--line); padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
@@ -738,6 +740,9 @@ function toast(msg){
   setTimeout(()=>t.classList.remove('show'), 2200);
 }
 function fmt(n){ return Math.round(n).toLocaleString('es-CL'); }
+function mensajeGuardado(){
+  return SHEETS_URL ? 'Guardado y enviado a Sheets' : 'Guardado en este celular (sin URL de Sheets configurada — solo local)';
+}
 
 /* ============ INIT FORM CASA ============ */
 function initForm(){
@@ -885,12 +890,19 @@ function guardarMovimiento(){
   document.getElementById('fMonto').value=''; document.getElementById('fItemOtro').value=''; document.getElementById('fNotas').value='';
   document.getElementById('fFoto').value=''; fotoBase64=null; document.getElementById('fotoPreview').style.display='none';
   document.getElementById('cuotaInfo').textContent='';
-  toast('Guardado');
+  toast(mensajeGuardado());
   renderRecientes();
 }
 
 const TIPO_LABEL = {fijo:'Fijo', variable:'Variable', cuenta:'Cuenta', aporte:'Aporte Fondo'};
 const TIPO_TAGCLASS = {fijo:'', variable:'', cuenta:'extra', aporte:'fondo'};
+function tagClaseMovimiento(m){
+  if(m.tipoMovimiento==='cuenta'){
+    if(m.persona===CONFIG.p1) return 'cuenta-p1';
+    if(m.persona===CONFIG.p2) return 'cuenta-p2';
+  }
+  return TIPO_TAGCLASS[m.tipoMovimiento];
+}
 
 function renderRecientes(){
   document.getElementById('mesRegistrarLabel').textContent = MESES[hoy.getMonth()]+' '+hoy.getFullYear();
@@ -899,7 +911,7 @@ function renderRecientes(){
   if(!delMes.length){ cont.innerHTML='<div class="empty">Sin movimientos aún este mes</div>'; return; }
   cont.innerHTML = delMes.map(m=>`
     <div class="gasto-item" onclick="abrirModalEditar('${m.id}')" style="cursor:pointer">
-      <div><div>${m.item} <span class="tag ${TIPO_TAGCLASS[m.tipoMovimiento]}">${TIPO_LABEL[m.tipoMovimiento]}</span>${m.tipoMovimiento!=='aporte'?`<span class="tag ${m.pagado?'fondo':'extra'}">${m.pagado?'Pagado':'Pendiente'}</span>`:''}</div>
+      <div><div>${m.item} <span class="tag ${tagClaseMovimiento(m)}">${TIPO_LABEL[m.tipoMovimiento]}</span>${m.tipoMovimiento!=='aporte'?`<span class="tag ${m.pagado?'fondo':'extra'}">${m.pagado?'Pagado':'Pendiente'}</span>`:''}</div>
       <div class="meta">${m.persona ? m.persona+' · ' : ''}${m.categoria}</div></div>
       <div class="monto">$${fmt(m.monto)}
         ${(m.tipoMovimiento!=='aporte' && !m.pagado)?`<button class="btn-ghost btn-xs" style="margin-left:8px; color:var(--favor); border-color:var(--favor)" onclick="event.stopPropagation(); marcarPagadoDirecto('${m.id}')">✓ Pagado</button>`:''}
@@ -923,7 +935,9 @@ function calcularBalance(mes, anio){
   const contribP1 = aportesFondoP1 + cuentaP1, contribP2 = aportesFondoP2 + cuentaP2;
   const arrastre = arrastrePrevio(mes, anio);
   const neto = (contribP1 - aporteReq) + arrastre;
-  return {delMes, gastos, total, aporteReq, aportesFondoP1, aportesFondoP2, cuentaP1, cuentaP2, contribP1, contribP2, arrastre, neto};
+  const pendienteP1 = Math.max(0, aporteReq - contribP1);
+  const pendienteP2 = Math.max(0, aporteReq - contribP2);
+  return {delMes, gastos, total, aporteReq, aportesFondoP1, aportesFondoP2, cuentaP1, cuentaP2, contribP1, contribP2, arrastre, neto, pendienteP1, pendienteP2};
 }
 
 function renderBalance(){
@@ -935,8 +949,10 @@ function renderBalance(){
   const encabezado = cierreExistente
     ? `<div class="balance-num favor">Cerrado</div>
        <div class="balance-sub">Mes liquidado — ${cierreExistente.arrastre===0?'sin arrastre':( (cierreExistente.arrastre>=0?CONFIG.p1:CONFIG.p2)+' queda con $'+fmt(Math.abs(cierreExistente.arrastre))+' a favor para el próximo mes')}</div>`
-    : `<div class="balance-num ${monto<1?'':'favor'}">$${fmt(monto)}</div>
-       <div class="balance-sub">${monto<1?'Cuentas parejas este mes':debe+' le debe a '+favor+' — mientras el mes no se cierre, esto es solo el cálculo en curso'}</div>`;
+    : `<div class="balance-sub" style="margin-bottom:10px">Falta depositar al fondo común este mes:</div>
+       <div class="split-row" style="font-size:1.1rem"><span>${CONFIG.p1}</span><span class="balance-num" style="font-size:1.3rem; margin:0">$${fmt(b.pendienteP1)}</span></div>
+       <div class="split-row" style="font-size:1.1rem"><span>${CONFIG.p2}</span><span class="balance-num" style="font-size:1.3rem; margin:0">$${fmt(b.pendienteP2)}</span></div>
+       <div class="balance-sub" style="margin-top:10px">${monto<1?'Con eso quedan parejos.':'Si se liquidara hoy tal cual está, correspondería que '+debe+' le transfiera $'+fmt(monto)+' a '+favor+' — o que lo deposite de más al fondo. Esto es solo el cálculo en curso, no una deuda fija mientras el mes no se cierre.'}</div>`;
 
   document.getElementById('balanceResumen').innerHTML = `
     ${encabezado}
@@ -1002,7 +1018,7 @@ function renderListaMes(delMes){
   if(!delMes.length){ cont.innerHTML='<div class="empty">Sin movimientos este mes</div>'; return; }
   cont.innerHTML = delMes.slice().sort((a,b)=>a.fecha.localeCompare(b.fecha)).map(m=>`
     <div class="gasto-item" onclick="abrirModalEditar('${m.id}')" style="cursor:pointer">
-      <div><div>${m.item} <span class="tag ${TIPO_TAGCLASS[m.tipoMovimiento]}">${TIPO_LABEL[m.tipoMovimiento]}</span>${m.tipoMovimiento!=='aporte'?`<span class="tag ${m.pagado?'fondo':'extra'}">${m.pagado?'Pagado':'Pendiente'}</span>`:''}</div>
+      <div><div>${m.item} <span class="tag ${tagClaseMovimiento(m)}">${TIPO_LABEL[m.tipoMovimiento]}</span>${m.tipoMovimiento!=='aporte'?`<span class="tag ${m.pagado?'fondo':'extra'}">${m.pagado?'Pagado':'Pendiente'}</span>`:''}</div>
       <div class="meta">${m.persona?m.persona+' · ':''}${m.categoria} · ${m.fecha}</div></div>
       <div class="monto">$${fmt(m.monto)}
         ${(m.tipoMovimiento!=='aporte' && !m.pagado)?`<button class="btn-ghost btn-xs" style="margin-left:8px; color:var(--favor); border-color:var(--favor)" onclick="event.stopPropagation(); marcarPagadoDirecto('${m.id}')">✓ Pagado</button>`:''}
@@ -1339,7 +1355,7 @@ function guardarCuota(){
   sync('cuotas', CUOTAS);
   cerrarModalCuota();
   renderCuotasList();
-  toast('Guardado');
+  toast(mensajeGuardado());
 }
 function borrarCuota(){
   if(cuotaEditIdx===null) return;
@@ -1535,7 +1551,7 @@ function guardarMovimientoPersonal(){
   sync('personal_movimiento', {id:m.id, tipoMovimiento:m.tipoMovimiento, fecha:m.fecha, mes:MESES[m.mes], anio:m.anio, categoria:m.categoria, item:m.item, monto:m.monto, persona:m.persona, notas:m.notas});
 
   document.getElementById('pMonto').value=''; document.getElementById('pItemOtro').value=''; document.getElementById('pNotas').value='';
-  toast('Guardado'); renderRecientesP();
+  toast(mensajeGuardado()); renderRecientesP();
 }
 
 function renderRecientesP(){
@@ -2009,7 +2025,7 @@ function guardarCargaFijos(){
 
   if(guardados){ persist(); sync('categorias', CATEGORIAS.filter(c=>c.tipo==='fijo')); }
   cerrarCargaFijos();
-  toast(guardados+' movimientos guardados');
+  toast(guardados+' movimientos guardados'+(SHEETS_URL?' y enviados a Sheets':' (solo local, sin URL de Sheets configurada)'));
   renderRecientes();
 }
 
