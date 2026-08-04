@@ -302,6 +302,11 @@ small.hint{color:var(--muted); display:block; margin-top:6px; font-size:.75rem;}
       <div id="analisisCuentasCasa"></div>
     </div>
     <div class="card">
+      <h3>Arrastre entre ustedes (histórico)</h3>
+      <small class="hint">Lo que quedó sin liquidar al cierre de cada mes. Si ves varios meses seguidos con arrastre a favor de la misma persona, es la señal de que uno está financiando al otro sin que se note — por eso está aquí, no escondido.</small>
+      <div id="analisisArrastreCasa" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
       <h3>Recomendaciones</h3>
       <div id="analisisRecomendacionesCasa"></div>
     </div>
@@ -318,12 +323,17 @@ small.hint{color:var(--muted); display:block; margin-top:6px; font-size:.75rem;}
     </div>
     <div class="card">
       <h3>Cuentas bancarias / tarjetas</h3>
-      <small class="hint">Catálogo de cuentas de origen para marcar los pagos (ej. "Cta Cte BCI Nico", "Tarjeta Crédito Visa").</small>
+      <small class="hint">Marca de quién es cada cuenta. Si un gasto fijo/variable se paga desde la cuenta personal de alguien (ej. el hipotecario se debita solo de la cuenta de Nico), esa persona queda acreditada automáticamente por ese pago hacia su aporte del mes — sin eso, ese pago queda invisible y puede generar una asimetría que nadie nota.</small>
       <div id="listaCuentasBanco" style="margin-top:8px"></div>
       <div class="row2" style="margin-top:8px">
         <input id="nuevaCuentaInput" placeholder="Nombre de la cuenta">
-        <button class="btn-ghost btn-sm" onclick="agregarCuentaBanco()">+ Agregar</button>
+        <select id="nuevaCuentaDueño">
+          <option value="p1"></option>
+          <option value="p2"></option>
+          <option value="comun">Fondo Común</option>
+        </select>
       </div>
+      <button class="btn-ghost btn-sm" style="margin-top:8px; width:100%" onclick="agregarCuentaBanco()">+ Agregar cuenta</button>
     </div>
     <div class="card">
       <h3>Compras a cuotas <button class="btn-ghost btn-sm" style="float:right" onclick="abrirModalCuota()">+ Nueva</button></h3>
@@ -932,12 +942,22 @@ function calcularBalance(mes, anio){
   const aportesFondoP2 = delMes.filter(m=>m.tipoMovimiento==='aporte' && m.persona===CONFIG.p2).reduce((s,m)=>s+m.monto,0);
   const cuentaP1 = delMes.filter(m=>m.tipoMovimiento==='cuenta' && m.persona===CONFIG.p1).reduce((s,m)=>s+m.monto,0);
   const cuentaP2 = delMes.filter(m=>m.tipoMovimiento==='cuenta' && m.persona===CONFIG.p2).reduce((s,m)=>s+m.monto,0);
-  const contribP1 = aportesFondoP1 + cuentaP1, contribP2 = aportesFondoP2 + cuentaP2;
+
+  // Un gasto FIJO o VARIABLE ya pagado y cuya cuenta de destino es la cuenta
+  // PERSONAL de alguien (no el fondo común) significa que esa persona lo
+  // financió de su bolsillo, aunque nadie lo haya marcado como "Cuenta a
+  // devolver". Sin esto, pagos automáticos (ej. hipotecario debitado siempre
+  // de la cuenta de uno) quedan invisibles y generan una asimetría oculta.
+  const pagadosDesdeCuentaPersonal = delMes.filter(m=>(m.tipoMovimiento==='fijo'||m.tipoMovimiento==='variable') && m.pagado && m.cuentaOrigen);
+  const creditoPersonalP1 = pagadosDesdeCuentaPersonal.filter(m=>dueñoCuenta(cuentaPorNombre(m.cuentaOrigen)||{dueño:'comun'})==='p1').reduce((s,m)=>s+m.monto,0);
+  const creditoPersonalP2 = pagadosDesdeCuentaPersonal.filter(m=>dueñoCuenta(cuentaPorNombre(m.cuentaOrigen)||{dueño:'comun'})==='p2').reduce((s,m)=>s+m.monto,0);
+
+  const contribP1 = aportesFondoP1 + cuentaP1 + creditoPersonalP1, contribP2 = aportesFondoP2 + cuentaP2 + creditoPersonalP2;
   const arrastre = arrastrePrevio(mes, anio);
   const neto = (contribP1 - aporteReq) + arrastre;
   const pendienteP1 = Math.max(0, aporteReq - contribP1);
   const pendienteP2 = Math.max(0, aporteReq - contribP2);
-  return {delMes, gastos, total, aporteReq, aportesFondoP1, aportesFondoP2, cuentaP1, cuentaP2, contribP1, contribP2, arrastre, neto, pendienteP1, pendienteP2};
+  return {delMes, gastos, total, aporteReq, aportesFondoP1, aportesFondoP2, cuentaP1, cuentaP2, creditoPersonalP1, creditoPersonalP2, contribP1, contribP2, arrastre, neto, pendienteP1, pendienteP2};
 }
 
 function renderBalance(){
@@ -963,6 +983,8 @@ function renderBalance(){
       <div class="split-row"><span>Aportes al fondo — ${CONFIG.p2}</span><span>$${fmt(b.aportesFondoP2)}</span></div>
       <div class="split-row"><span>Cuentas por cobrar — ${CONFIG.p1}</span><span>$${fmt(b.cuentaP1)}</span></div>
       <div class="split-row"><span>Cuentas por cobrar — ${CONFIG.p2}</span><span>$${fmt(b.cuentaP2)}</span></div>
+      <div class="split-row"><span>Fijos/variables pagados desde cuenta personal — ${CONFIG.p1}</span><span>$${fmt(b.creditoPersonalP1)}</span></div>
+      <div class="split-row"><span>Fijos/variables pagados desde cuenta personal — ${CONFIG.p2}</span><span>$${fmt(b.creditoPersonalP2)}</span></div>
       <div class="split-row"><span>Arrastre mes anterior</span><span>${b.arrastre>=0?'+':''}$${fmt(b.arrastre)} (a favor de ${b.arrastre>=0?CONFIG.p1:CONFIG.p2})</span></div>
     </div>`;
   renderPresupuestos(b.gastos);
@@ -1073,7 +1095,7 @@ function abrirModalEditar(id){
   }
 
   document.getElementById('editPagoWrap').style.display = m.tipoMovimiento==='aporte' ? 'none' : '';
-  document.getElementById('editCuentaOrigen').innerHTML = CUENTAS.map(c=>`<option value="${c}">${c}</option>`).join('') || '<option value="">(sin cuentas configuradas)</option>';
+  document.getElementById('editCuentaOrigen').innerHTML = CUENTAS.map(c=>`<option value="${nombreCuenta(c)}">${nombreCuenta(c)}</option>`).join('') || '<option value="">(sin cuentas configuradas)</option>';
   document.getElementById('editCuentaOrigen').value = m.cuentaOrigen || '';
   if(m.pagado){
     document.getElementById('editPagoEstado').textContent = `Pagado el ${formatFechaHora(m.fechaPago)}${m.cuentaOrigen ? ' — '+m.cuentaOrigen : ''}`;
@@ -1277,25 +1299,32 @@ function borrarPerfil(){
   toast('Perfil eliminado');
 }
 
+function nombreCuenta(c){ return typeof c==='string' ? c : c.nombre; }
+function dueñoCuenta(c){ return typeof c==='string' ? 'comun' : (c.dueño||'comun'); }
+function etiquetaDueño(d){ return d==='p1'?CONFIG.p1 : d==='p2'?CONFIG.p2 : 'Fondo Común'; }
+function cuentaPorNombre(nombre){ return CUENTAS.find(c=>nombreCuenta(c)===nombre); }
+
 function renderCuentasBanco(){
+  document.getElementById('nuevaCuentaDueño').innerHTML = `<option value="p1">${CONFIG.p1}</option><option value="p2">${CONFIG.p2}</option><option value="comun">Fondo Común</option>`;
   const cont = document.getElementById('listaCuentasBanco');
   cont.innerHTML = CUENTAS.length ? CUENTAS.map((c,i)=>`
-    <div class="cat-row"><div>${c}</div><button class="btn-danger btn-xs" onclick="borrarCuentaBanco(${i})">✕</button></div>`).join('')
+    <div class="cat-row"><div><div>${nombreCuenta(c)}</div><div class="cat-items">Dueño: ${etiquetaDueño(dueñoCuenta(c))}</div></div><button class="btn-danger btn-xs" onclick="borrarCuentaBanco(${i})">✕</button></div>`).join('')
     : '<div class="empty">Sin cuentas configuradas</div>';
 }
 function agregarCuentaBanco(){
   if(!requiereAdmin()) return;
   const val = document.getElementById('nuevaCuentaInput').value.trim();
   if(!val) return;
-  CUENTAS.push(val);
-  persist(); sync('cuentas', CUENTAS);
+  const dueño = document.getElementById('nuevaCuentaDueño').value;
+  CUENTAS.push({nombre:val, dueño});
+  persist(); sync('cuentas', CUENTAS.map(c=>({nombre:nombreCuenta(c), dueño:dueñoCuenta(c)})));
   document.getElementById('nuevaCuentaInput').value='';
   renderCuentasBanco();
 }
 function borrarCuentaBanco(idx){
   if(!requiereAdmin()) return;
   CUENTAS.splice(idx,1);
-  persist(); sync('cuentas', CUENTAS);
+  persist(); sync('cuentas', CUENTAS.map(c=>({nombre:nombreCuenta(c), dueño:dueñoCuenta(c)})));
   renderCuentasBanco();
 }
 
@@ -1316,7 +1345,7 @@ function abrirModalCuota(idx){
   cuotaEditIdx = (idx===undefined) ? null : idx;
   document.getElementById('modalCuotaTitulo').textContent = cuotaEditIdx===null ? 'Nueva compra a cuotas' : 'Editar compra a cuotas';
   document.getElementById('cuotaCategoria').innerHTML = CATEGORIAS.filter(c=>c.tipo==='fijo').map(c=>`<option value="${c.nombre}">${c.nombre}</option>`).join('');
-  document.getElementById('cuotaCuentaDestino').innerHTML = `<option value="">(sin definir)</option>` + CUENTAS.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('cuotaCuentaDestino').innerHTML = `<option value="">(sin definir)</option>` + CUENTAS.map(c=>`<option value="${nombreCuenta(c)}">${nombreCuenta(c)}</option>`).join('');
   document.getElementById('cuotaBorrarBtn').style.display = cuotaEditIdx===null ? 'none' : '';
   if(cuotaEditIdx===null){
     document.getElementById('cuotaNombre').value = '';
@@ -1474,7 +1503,7 @@ function agregarItemFijoRow(it){
     <label style="margin-top:6px">Cuenta de destino (quién paga esto)</label>
     <select class="it-cuenta-destino">
       <option value="">(sin definir)</option>
-      ${CUENTAS.map(c=>`<option value="${c}" ${it.cuentaDestino===c?'selected':''}>${c}</option>`).join('')}
+      ${CUENTAS.map(c=>`<option value="${nombreCuenta(c)}" ${it.cuentaDestino===nombreCuenta(c)?'selected':''}>${nombreCuenta(c)}</option>`).join('')}
     </select>`;
   row.querySelector('.it-medio').onchange = (e)=>{
     row.querySelector('.credito-fields').classList.toggle('show', e.target.value==='Crédito');
@@ -1838,7 +1867,7 @@ async function resincronizarTodoCasa(){
   sync('presupuestos', CATEGORIAS.filter(c=>c.tipo==='variable').map(c=>({categoria:c.nombre, monto:c.presupuesto||0})));
   sync('cuotas', CUOTAS);
   sync('perfiles', PERFILES);
-  sync('cuentas', CUENTAS);
+  sync('cuentas', CUENTAS.map(c=>({nombre:nombreCuenta(c), dueño:dueñoCuenta(c)})));
   toast('Reenvío completo — revisa el Sheet en unos segundos');
 }
 
@@ -2073,8 +2102,29 @@ function renderAnalisisCasa(){
     <div class="split-row"><span>Total histórico adelantado por ${CONFIG.p1}</span><span>$${fmt(cuentaP1Total)}</span></div>
     <div class="split-row"><span>Total histórico adelantado por ${CONFIG.p2}</span><span>$${fmt(cuentaP2Total)}</span></div>`;
 
+  // Arrastre histórico — para que una deuda que se arrastra mes a mes no quede invisible
+  const cierresOrdenados = CIERRES.slice().sort((a,b)=> (a.anio-b.anio) || (a.mes-b.mes));
+  document.getElementById('analisisArrastreCasa').innerHTML = cierresOrdenados.length ? cierresOrdenados.map(c=>{
+    const favorC = c.arrastre>=0?CONFIG.p1:CONFIG.p2;
+    return `<div class="split-row"><span>${MESES[c.mes]} ${c.anio}</span><span style="${c.arrastre!==0?'color:var(--warn)':''}">${c.arrastre===0?'Sin arrastre':'$'+fmt(Math.abs(c.arrastre))+' a favor de '+favorC}</span></div>`;
+  }).join('') : '<div class="empty">Sin meses cerrados todavía</div>';
+
+  // Racha de arrastre consecutivo a favor de la misma persona (posible carga silenciosa)
+  let rachaPersona = null, rachaCount = 0, rachaMonto = 0;
+  for(let i=cierresOrdenados.length-1; i>=0; i--){
+    const c = cierresOrdenados[i];
+    if(c.arrastre===0) break;
+    const fav = c.arrastre>=0?CONFIG.p1:CONFIG.p2;
+    if(rachaPersona===null) rachaPersona = fav;
+    if(fav!==rachaPersona) break;
+    rachaCount++; rachaMonto += Math.abs(c.arrastre);
+  }
+
   // Recomendaciones basadas en reglas simples
   const recs = [];
+  if(rachaCount>=2){
+    recs.push(`${rachaPersona} lleva ${rachaCount} meses seguidos cerrando con arrastre a su favor (acumulado $${fmt(rachaMonto)}) — esto es exactamente el patrón de "uno está financiando al otro sin que se note". Vale la pena juntarse a liquidar esa diferencia directamente, no solo dejarla rodar.`);
+  }
   if(sobregastos.some(s=>s.promedio > 0.15*(variables.find(v=>v.nombre===s.nombre)?.presupuesto||1))){
     const peor = sobregastos.sort((a,b)=>b.promedio-a.promedio)[0];
     recs.push(`"${peor.nombre}" se sobregasta en promedio $${fmt(peor.promedio)} al mes — considera subir el presupuesto a un monto más realista, o revisar qué está empujando el gasto.`);
@@ -2296,7 +2346,7 @@ async function sincronizarDesdeSheets(silencioso){
     }
     if(data.Cuentas && data.Cuentas.length>1){
       const headers = data.Cuentas[0], idx = n=>headers.indexOf(n);
-      const remotas = data.Cuentas.slice(1).map(row=>row[idx('Nombre')]).filter(Boolean);
+      const remotas = data.Cuentas.slice(1).filter(row=>row[idx('Nombre')]).map(row=>({nombre:row[idx('Nombre')], dueño:row[idx('Dueño')]||'comun'}));
       if(remotas.length) CUENTAS = remotas;
     }
 
